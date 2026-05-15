@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BTC Invest – chytré DCA</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>₿</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>₿ BTC Invest</h1>
+    <div class="topbar-actions">
+      <span id="priceTicker" class="ticker" title="Aktuální cena BTC">—</span>
+      <button id="btnRefresh" class="btn ghost" title="Načíst data znovu">↻</button>
+      <button id="btnSettings" class="btn ghost" title="Nastavení">⚙</button>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <!-- 1. Plán -->
+    <section class="card" id="cardPlan">
+      <h2>1. Plán investice</h2>
+      <div class="form-grid">
+        <label>
+          <span>Asset</span>
+          <select id="assetSelect">
+            <option value="bitcoin">Bitcoin (BTC)</option>
+            <!-- další assets se přidají dynamicky z assets.js -->
+          </select>
+        </label>
+        <label>
+          <span>Celkový budget</span>
+          <div class="input-with-suffix">
+            <input type="number" id="budget" min="1" step="100" value="1000" />
+            <select id="currency">
+              <option value="CZK" selected>CZK</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+        </label>
+        <label>
+          <span>Období</span>
+          <select id="period">
+            <option value="week">1 týden</option>
+            <option value="month" selected>1 měsíc</option>
+            <option value="quarter">3 měsíce</option>
+            <option value="year">1 rok</option>
+          </select>
+        </label>
+        <label>
+          <span>Interval investování</span>
+          <select id="interval">
+            <option value="daily">Denně</option>
+            <option value="weekly" selected>Týdně</option>
+            <option value="biweekly">Každých 14 dní</option>
+            <option value="monthly">Měsíčně</option>
+          </select>
+        </label>
+        <label>
+          <span>Citlivost (k)</span>
+          <input type="range" id="sensitivity" min="0.5" max="3" step="0.1" value="1.5" />
+          <small id="sensitivityLabel">1.5 – střední</small>
+        </label>
+        <label>
+          <span>Datum startu</span>
+          <input type="date" id="startDate" />
+        </label>
+      </div>
+      <div class="row gap">
+        <button id="btnSavePlan" class="btn primary">Uložit plán</button>
+        <button id="btnResetPlan" class="btn ghost">Resetovat</button>
+        <span id="planStatus" class="muted"></span>
+      </div>
+    </section>
+
+    <!-- 2. Doporučení -->
+    <section class="card recommendation" id="cardRecommendation">
+      <h2>2. Doporučení pro aktuální interval</h2>
+      <div id="recoBody">
+        <p class="muted">Zadej plán a načti data…</p>
+      </div>
+    </section>
+
+    <!-- 3. Matematický výpočet -->
+    <section class="card" id="cardMath">
+      <h2>3. Matematický model</h2>
+      <div id="mathBody" class="math-grid">
+        <div class="metric"><span class="metric-label">Cena BTC</span><span class="metric-value" id="mPrice">—</span></div>
+        <div class="metric"><span class="metric-label">200d SMA</span><span class="metric-value" id="mSMA">—</span></div>
+        <div class="metric"><span class="metric-label">Mayer Multiple</span><span class="metric-value" id="mMayer">—</span></div>
+        <div class="metric"><span class="metric-label">Z-score (log)</span><span class="metric-value" id="mZ">—</span></div>
+        <div class="metric"><span class="metric-label">Multiplikátor</span><span class="metric-value highlight" id="mMult">—</span></div>
+        <div class="metric"><span class="metric-label">Verdikt</span><span class="metric-value" id="mVerdict">—</span></div>
+      </div>
+      <details class="explain">
+        <summary>Jak se počítá?</summary>
+        <div class="explain-body">
+          <p><b>Mayer Multiple</b> = aktuální cena ÷ 200denní klouzavý průměr. Historický medián ≈ 1.4. Hodnota pod 1 značí výrazně podhodnocený BTC, nad 2.4 silně nadhodnocený.</p>
+          <p><b>Z-score</b> je standardizovaná odchylka log-ceny od průměru za 1 rok – statistická míra, jak je aktuální cena výjimečná.</p>
+          <p><b>Multiplikátor</b> kombinuje obě veličiny do faktoru 0.2×–2.5×, kterým se škáluje plánovaná částka na interval. Pak je omezen zbývajícím budgetem.</p>
+          <p>Vzorec: <code>factor = clamp((1.4 / mayer)^k × zAdjust, 0.2, 2.5)</code>, kde <code>k</code> je citlivost.</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- 4. AI doporučení -->
+    <section class="card" id="cardAI">
+      <h2>4. AI doporučení (Groq + Gemini)</h2>
+      <div class="ai-grid">
+        <div class="ai-pane">
+          <h3>Groq <small id="groqModel" class="muted">llama-3.3-70b</small></h3>
+          <div id="groqBody"><p class="muted">Pro spuštění zadej API klíč v Nastavení.</p></div>
+        </div>
+        <div class="ai-pane">
+          <h3>Gemini <small id="geminiModel" class="muted">2.5-flash</small></h3>
+          <div id="geminiBody"><p class="muted">Pro spuštění zadej API klíč v Nastavení.</p></div>
+        </div>
+      </div>
+      <button id="btnAskAI" class="btn">🤖 Zeptat se AI</button>
+    </section>
+
+    <!-- 5. Graf -->
+    <section class="card" id="cardChart">
+      <h2>5. Cena BTC – posledních 365 dní</h2>
+      <canvas id="priceChart" height="120"></canvas>
+    </section>
+
+    <!-- 6. Historie investic -->
+    <section class="card" id="cardHistory">
+      <h2>6. Historie investic</h2>
+      <div class="row gap">
+        <button id="btnAddInvestment" class="btn primary">+ Zaznamenat investici</button>
+        <button id="btnExport" class="btn ghost">Export JSON</button>
+        <button id="btnImport" class="btn ghost">Import JSON</button>
+        <input type="file" id="importFile" accept=".json" hidden />
+      </div>
+      <table class="table" id="historyTable">
+        <thead>
+          <tr>
+            <th>Datum</th>
+            <th>Částka</th>
+            <th>Cena BTC</th>
+            <th>Získané BTC</th>
+            <th>Mayer</th>
+            <th>Aktuální hodnota</th>
+            <th>Zisk/ztráta</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <tr class="empty"><td colspan="8" class="muted">Zatím žádné investice</td></tr>
+        </tbody>
+        <tfoot id="historyFoot" hidden>
+          <tr>
+            <th>Celkem</th>
+            <th id="sumAmount"></th>
+            <th></th>
+            <th id="sumBTC"></th>
+            <th></th>
+            <th id="sumCurrent"></th>
+            <th id="sumPnl"></th>
+            <th></th>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+
+  </main>
+
+  <!-- Settings modal -->
+  <dialog id="settingsModal" class="modal">
+    <form method="dialog">
+      <h2>Nastavení</h2>
+
+      <fieldset>
+        <legend>API klíče (uloženy lokálně v prohlížeči)</legend>
+        <label>
+          <span>Groq API key</span>
+          <input type="password" id="groqKey" autocomplete="off" placeholder="gsk_…" />
+        </label>
+        <label>
+          <span>Groq model</span>
+          <select id="groqModelSelect">
+            <option value="llama-3.3-70b-versatile" selected>llama-3.3-70b-versatile</option>
+            <option value="llama-3.1-70b-versatile">llama-3.1-70b-versatile</option>
+            <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
+          </select>
+        </label>
+        <label>
+          <span>Gemini API key</span>
+          <input type="password" id="geminiKey" autocomplete="off" placeholder="AI…" />
+        </label>
+        <label>
+          <span>Gemini model</span>
+          <select id="geminiModelSelect">
+            <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+            <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+          </select>
+        </label>
+        <p class="warning">⚠ Klíče zůstávají v <code>localStorage</code> tvého prohlížeče. Aplikace běží čistě klientsky – nikam je neodesílá kromě přímo na Groq/Gemini API.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Měna</legend>
+        <label>
+          <span>Zobrazovat ceny v</span>
+          <select id="displayCurrency">
+            <option value="CZK" selected>CZK</option>
+            <option value="USD">USD</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Vlastní assety</legend>
+        <p class="muted">Přidej další kryptoměnu (CoinGecko ID, např. <code>ethereum</code>, <code>solana</code>).</p>
+        <div class="row gap">
+          <input type="text" id="newAssetId" placeholder="coingecko id" />
+          <input type="text" id="newAssetLabel" placeholder="zobrazený název" />
+          <button type="button" id="btnAddAsset" class="btn">+ Přidat</button>
+        </div>
+        <ul id="customAssetsList" class="custom-list"></ul>
+      </fieldset>
+
+      <div class="row gap end">
+        <button type="button" id="btnClearAll" class="btn danger">Vymazat všechna data</button>
+        <button class="btn primary" value="save">Zavřít</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Add investment modal -->
+  <dialog id="investmentModal" class="modal">
+    <form method="dialog">
+      <h2>Zaznamenat investici</h2>
+      <div class="form-grid">
+        <label>
+          <span>Datum</span>
+          <input type="date" id="invDate" required />
+        </label>
+        <label>
+          <span>Částka</span>
+          <div class="input-with-suffix">
+            <input type="number" id="invAmount" step="0.01" min="0" required />
+            <select id="invCurrency">
+              <option value="CZK" selected>CZK</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+        </label>
+        <label>
+          <span>Cena BTC v daný den</span>
+          <input type="number" id="invPrice" step="0.01" min="0" required />
+          <small class="muted">Předvyplněno z historie. Můžeš upravit.</small>
+        </label>
+      </div>
+      <div class="row gap end">
+        <button type="button" id="btnCancelInv" class="btn ghost" value="cancel">Zrušit</button>
+        <button class="btn primary" id="btnSaveInv" value="save">Uložit</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
