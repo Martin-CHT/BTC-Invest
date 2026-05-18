@@ -18,9 +18,14 @@ function init() {
   wireSettings();
   wireHistory();
   wireAI();
+  wireHelp();
   applyStateToUI();
   $('#startDate').value = state.plan?.startDate || todayISO();
   refresh();
+}
+
+function displayCurrency() {
+  return (state.settings.displayCurrency || 'USD').toUpperCase();
 }
 
 function todayISO() {
@@ -31,7 +36,6 @@ function populateAssets() {
   const sel = $('#assetSelect');
   sel.innerHTML = '';
   const all = [...DEFAULT_ASSETS, ...(state.customAssets || [])];
-  // unique
   const seen = new Set();
   for (const a of all) {
     if (seen.has(a.id)) continue;
@@ -58,11 +62,26 @@ function applyStateToUI() {
   $('#geminiKey').value = state.settings.geminiKey || '';
   $('#groqModelSelect').value = state.settings.groqModel;
   $('#geminiModelSelect').value = state.settings.geminiModel;
-  $('#displayCurrency').value = state.settings.displayCurrency;
+  $('#displayCurrency').value = displayCurrency();
   $('#groqModel').textContent = state.settings.groqModel;
   $('#geminiModel').textContent = state.settings.geminiModel;
   renderCustomAssetsList();
+  applyDisplayCurrencyLabels();
   renderHistory();
+}
+
+function applyDisplayCurrencyLabels() {
+  const c = displayCurrency();
+  $('#thPriceBTC').textContent = `Cena BTC (${c})`;
+  $('#thValueNow').textContent = `Hodnota dnes (${c})`;
+  $('#thPnL').textContent = `Zisk/ztráta (${c})`;
+  const chartTitle = $('#chartTitle');
+  if (chartTitle) {
+    const assetLabel = $('#assetSelect option:checked')?.textContent || 'BTC';
+    const ticker = assetLabel.split(' ')[0];
+    chartTitle.innerHTML = `5. Cena ${ticker} – posledních 365 dní (${c}) <button class="help-btn" data-help="chart" type="button" title="Vysvětlivka">ⓘ</button>`;
+    // Click se chytí globálním listenerem ve wireHelp() – přidávat nový tu nemusíme.
+  }
 }
 
 function sensitivityWord(k) {
@@ -79,7 +98,7 @@ function wireForm() {
     state.settings.sensitivity = v;
     $('#sensitivityLabel').textContent = `${v.toFixed(1)} – ${sensitivityWord(v)}`;
     storage.save(state);
-    if (lastContext) updateMathView(); // přepočítat
+    if (lastContext) refresh();
   });
 
   $('#btnSavePlan').addEventListener('click', () => {
@@ -100,12 +119,7 @@ function wireForm() {
 
   $('#btnRefresh').addEventListener('click', refresh);
   $('#btnSettings').addEventListener('click', () => $('#settingsModal').showModal());
-  $('#sensitivityHelp').addEventListener('click', (e) => {
-    e.preventDefault();
-    $('#sensitivityModal').showModal();
-  });
 
-  // Auto-fill startDate if empty
   if (!$('#startDate').value) $('#startDate').value = todayISO();
 }
 
@@ -123,6 +137,14 @@ function readPlanFromForm() {
 // --- Settings ---
 function wireSettings() {
   const modal = $('#settingsModal');
+
+  // Změna měny přímo v selectu – okamžitě aplikovat (bez čekání na zavření).
+  $('#displayCurrency').addEventListener('change', () => {
+    state.settings.displayCurrency = $('#displayCurrency').value;
+    storage.save(state);
+    applyDisplayCurrencyLabels();
+    refresh();
+  });
 
   modal.addEventListener('close', () => {
     state.settings.groqKey = $('#groqKey').value.trim();
@@ -201,11 +223,10 @@ function wireHistory() {
     $('#investmentModal').showModal();
   });
 
-  // Načti cenu když uživatel změní datum nebo měnu
   $('#invDate').addEventListener('change', updateInvPrice);
   $('#invCurrency').addEventListener('change', updateInvPrice);
 
-  $('#investmentModal').addEventListener('close', (e) => {
+  $('#investmentModal').addEventListener('close', () => {
     if ($('#investmentModal').returnValue !== 'save') return;
     const amount = parseFloat($('#invAmount').value);
     const price = parseFloat($('#invPrice').value);
@@ -281,39 +302,40 @@ function renderHistory() {
   }
   tfoot.hidden = false;
 
-  // Aktuální USD cena z lastContext (jen pokud byl refresh úspěšný).
-  const priceNowUsd = lastContext?.currentPrices?.usd ?? null;
-  const usdHistory = lastContext?.history ?? null;
+  const disp = displayCurrency();
+  const dispLower = disp.toLowerCase();
+  const priceNowDisp = lastContext?.currentPrices?.[dispLower] ?? null;
+  const dispHistory = lastContext?.history ?? null;
 
-  // Akumulátory: vklad zůstává v CZK (původní amount), zbytek v USD pro konzistenci.
-  const sumByCcy = {};      // sumByCcy['CZK'] = celkový CZK vklad
+  // Akumulátory: vklad zůstává v původní měně (CZK), zbytek v display currency.
+  const sumByCcy = {};
   let sumBTC = 0;
-  let sumInvestUsd = 0;     // ekvivalent vkladu v USD (k datu nákupu)
-  let sumCurrentUsd = 0;    // aktuální hodnota v USD
+  let sumInvestDisp = 0;
+  let sumCurrentDisp = 0;
 
   const sorted = [...state.investments].sort((a, b) => a.date.localeCompare(b.date));
   for (const inv of sorted) {
-    const usdAtBuy = usdHistory ? priceAtDate(usdHistory, inv.date) : null;
-    const investUsd = usdAtBuy != null ? inv.coinsReceived * usdAtBuy : null;
-    const currentUsd = priceNowUsd != null ? inv.coinsReceived * priceNowUsd : null;
-    const pnlUsd = (currentUsd != null && investUsd != null) ? currentUsd - investUsd : null;
+    const priceAtBuyDisp = dispHistory ? priceAtDate(dispHistory, inv.date) : null;
+    const investDisp = priceAtBuyDisp != null ? inv.coinsReceived * priceAtBuyDisp : null;
+    const currentDisp = priceNowDisp != null ? inv.coinsReceived * priceNowDisp : null;
+    const pnlDisp = (currentDisp != null && investDisp != null) ? currentDisp - investDisp : null;
 
     sumByCcy[inv.currency] = (sumByCcy[inv.currency] || 0) + inv.amount;
     sumBTC += inv.coinsReceived;
-    if (investUsd != null) sumInvestUsd += investUsd;
-    if (currentUsd != null) sumCurrentUsd += currentUsd;
+    if (investDisp != null) sumInvestDisp += investDisp;
+    if (currentDisp != null) sumCurrentDisp += currentDisp;
 
-    const mayer = usdHistory ? mayerAtDate(usdHistory, inv.date) : null;
+    const mayer = dispHistory ? mayerAtDate(dispHistory, inv.date) : null;
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${formatDate(inv.date)}</td>
       <td>${fmtMoney(inv.amount, inv.currency)}</td>
-      <td>${usdAtBuy != null ? fmtMoney(usdAtBuy, 'USD') : '—'}</td>
+      <td>${priceAtBuyDisp != null ? fmtMoney(priceAtBuyDisp, disp) : '—'}</td>
       <td>${inv.coinsReceived.toFixed(8)}</td>
       <td>${mayer != null ? mayer.toFixed(2) : '—'}</td>
-      <td>${currentUsd != null ? fmtMoney(currentUsd, 'USD') : '—'}</td>
-      <td class="${pnlUsd > 0 ? 'pnl-pos' : pnlUsd < 0 ? 'pnl-neg' : ''}">${pnlUsd != null ? fmtSignedMoney(pnlUsd, 'USD') : '—'}</td>
+      <td>${currentDisp != null ? fmtMoney(currentDisp, disp) : '—'}</td>
+      <td class="${pnlDisp > 0 ? 'pnl-pos' : pnlDisp < 0 ? 'pnl-neg' : ''}">${pnlDisp != null ? fmtSignedMoney(pnlDisp, disp) : '—'}</td>
       <td class="row-actions"><button title="Smazat" data-id="${inv.id}">🗑</button></td>
     `;
     tr.querySelector('button').addEventListener('click', () => {
@@ -326,14 +348,13 @@ function renderHistory() {
     tbody.appendChild(tr);
   }
 
-  // Vklad = součet podle měn (typicky CZK, případně CZK + USD pokud byly oboje)
   const amountParts = Object.entries(sumByCcy).map(([c, v]) => fmtMoney(v, c));
   $('#sumAmount').textContent = amountParts.join(' + ');
   $('#sumBTC').textContent = sumBTC.toFixed(8);
-  $('#sumCurrent').textContent = priceNowUsd != null ? fmtMoney(sumCurrentUsd, 'USD') : '—';
-  const totalPnlUsd = sumCurrentUsd - sumInvestUsd;
-  $('#sumPnl').innerHTML = (priceNowUsd != null && usdHistory)
-    ? `<span class="${totalPnlUsd > 0 ? 'pnl-pos' : totalPnlUsd < 0 ? 'pnl-neg' : ''}">${fmtSignedMoney(totalPnlUsd, 'USD')}</span>`
+  $('#sumCurrent').textContent = priceNowDisp != null ? fmtMoney(sumCurrentDisp, disp) : '—';
+  const totalPnlDisp = sumCurrentDisp - sumInvestDisp;
+  $('#sumPnl').innerHTML = (priceNowDisp != null && dispHistory)
+    ? `<span class="${totalPnlDisp > 0 ? 'pnl-pos' : totalPnlDisp < 0 ? 'pnl-neg' : ''}">${fmtSignedMoney(totalPnlDisp, disp)}</span>`
     : '—';
 }
 
@@ -349,7 +370,6 @@ function priceAtDate(history, dateStr) {
 }
 
 function mayerAtDate(history, dateStr) {
-  // Najdi index nejbližšího dne v USD historii a spočti Mayer = cena_USD / 200d SMA_USD.
   const target = new Date(dateStr).getTime();
   let idx = 0;
   let bestDiff = Math.abs(history[0].date.getTime() - target);
@@ -418,9 +438,9 @@ async function askGeminiAndRender(ctx) {
   }
 }
 
-// --- Main refresh: načte data, spočítá vše, překreslí ---
-// BTC cena, SMA, Mayer, z-score a graf jsou vždy v USD (přirozená měna BTC).
-// Plán/budget/doporučení zůstávají v měně plánu (typicky CZK).
+// --- Main refresh ---
+// BTC cena, SMA, Mayer, z-score, graf, historie → v displayCurrency (default USD).
+// Plán/budget/doporučení → v měně plánu (typicky CZK).
 async function refresh() {
   if (!state.plan) {
     $('#recoBody').innerHTML = '<p class="muted">Vytvoř plán, abys viděl doporučení.</p>';
@@ -428,33 +448,35 @@ async function refresh() {
     return;
   }
   const plan = state.plan;
+  const disp = displayCurrency();
+  const dispLower = disp.toLowerCase();
 
   try {
     $('#priceTicker').textContent = '… načítám';
-    const [priceData, historyUsd] = await Promise.all([
+    const [priceData, historyDisp] = await Promise.all([
       getCurrentPrice(plan.asset, ['usd', 'czk']),
-      getHistory(plan.asset, 'usd', 365),
+      getHistory(plan.asset, dispLower, 365),
     ]);
-    const priceUsd = priceData.usd;
+    const priceShown = priceData[dispLower];
     const change24h = priceData.change24h;
 
-    $('#priceTicker').textContent = `${fmtMoney(priceUsd, 'USD')} (${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%)`;
+    $('#priceTicker').textContent = `${fmtMoney(priceShown, disp)} (${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%)`;
     $('#priceTicker').className = 'ticker ' + (change24h >= 0 ? 'up' : 'down');
 
-    const prices = historyUsd.map((h) => h.price);
-    const metrics = computeMetrics(prices, priceUsd, state.settings.sensitivity);
+    const prices = historyDisp.map((h) => h.price);
+    const metrics = computeMetrics(prices, priceShown, state.settings.sensitivity);
     const reco = computeRecommendation({
       plan,
       investments: state.investments.filter((i) => i.currency === plan.currency),
       multiplier: metrics.multiplier,
     });
 
-    const history12mPctChange = ((priceUsd - prices[0]) / prices[0]) * 100;
+    const history12mPctChange = ((priceShown - prices[0]) / prices[0]) * 100;
 
     lastContext = {
       asset: plan.asset,
-      currency: 'USD',
-      currentPrice: priceUsd,
+      currency: disp,
+      currentPrice: priceShown,
       currentPrices: { usd: priceData.usd, czk: priceData.czk },
       sma200: metrics.sma200,
       mayer: metrics.mayer,
@@ -463,13 +485,14 @@ async function refresh() {
       verdict: metrics.verdict,
       plan,
       recommendation: reco,
-      history: historyUsd,
+      history: historyDisp,
       history12mPctChange,
     };
 
+    applyDisplayCurrencyLabels();
     renderRecommendation(reco, metrics, plan);
     updateMathView();
-    renderChart($('#priceChart'), { history: historyUsd, investments: state.investments, currency: 'USD' });
+    renderChart($('#priceChart'), { history: historyDisp, investments: state.investments, currency: disp });
     renderHistory();
   } catch (err) {
     console.error(err);
@@ -506,6 +529,187 @@ function updateMathView() {
   $('#mMult').textContent = c.multiplier.toFixed(2) + '×';
   $('#mVerdict').textContent = c.verdict.label;
 }
+
+// --- Help system ---
+function wireHelp() {
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.help-btn');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openHelp(btn.dataset.help);
+  });
+}
+
+function openHelp(key) {
+  const content = HELP_CONTENT[key] || HELP_CONTENT.plan;
+  $('#helpTitle').textContent = content.title;
+  $('#helpBody').innerHTML = content.body;
+  $('#helpModal').showModal();
+}
+
+const HELP_CONTENT = {
+  plan: {
+    title: '1. Plán investice',
+    body: `
+      <p>Zde nastavíš svůj DCA plán. Aplikace tě bude doprovázet po celou dobu a v každém intervalu ti řekne, kolik investovat.</p>
+      <h3>Pole</h3>
+      <ul>
+        <li><b>Asset</b> – kterou kryptoměnu kupuješ. Default: Bitcoin. Další lze přidat v Nastavení.</li>
+        <li><b>Celkový budget</b> – kolik celkem chceš investovat za zvolené období (typicky v CZK).</li>
+        <li><b>Období</b> – jak dlouho bude plán běžet (týden / měsíc / kvartál / rok).</li>
+        <li><b>Interval investování</b> – jak často investuješ (denně / týdně / 14 dní / měsíčně).</li>
+        <li><b>Citlivost (k)</b> – jak silně algoritmus reaguje na cenové výkyvy. Viz vlastní vysvětlivka u slideru.</li>
+        <li><b>Datum startu</b> – kdy plán začíná. Obvykle dnes.</li>
+      </ul>
+      <h3>Příklad</h3>
+      <p>Budget <b>1000 CZK</b>, období <b>1 měsíc</b>, interval <b>týdně</b> = 4 intervaly po průměru 250 CZK. Aplikace tuto částku vychýlí: při levném BTC poradí investovat víc, při drahém jen zlomek.</p>
+    `,
+  },
+
+  reco: {
+    title: '2. Doporučení pro aktuální interval',
+    body: `
+      <p>Hlavní výstup aplikace: kolik právě teď investovat, abys maximalizoval efektivitu DCA.</p>
+      <h3>Co která položka znamená</h3>
+      <ul>
+        <li><b>Barevný štítek (Verdikt)</b> – 5stupňová klasifikace trhu: <i>Silný nákup → Nákup → Držet plán → Opatrnost → Drahé – vyčkat</i>. Vychází z Mayer Multiple a z-score (sekce 3).</li>
+        <li><b>Hlavní cifra (CZK)</b> – doporučená částka pro tento interval. Vzorec: <code>(zbývající budget ÷ zbývající intervaly) × multiplikátor</code>. Při levném BTC dostaneš víc než průměr, při drahém zlomek.</li>
+        <li><b>📅 Další interval</b> – kdy se podle plánu znova podívat a investovat.</li>
+        <li><b>📊 Plán</b> – připomenutí, co jsi zadal (celkový budget + frekvence).</li>
+        <li><b>💰 Investováno / Zbývá</b> – aktuální čerpání plánu. Když v některém intervalu investuješ méně, „úspora“ se rozprostře do následujících intervalů.</li>
+        <li><b>⏱ Interval N z M</b> – kolikátý interval z plánu právě probíhá. „Rovnoměrné DCA“ vedle ukazuje, kolik bys investoval bez vychylování – referenční bod, vůči kterému multiplikátor pracuje.</li>
+      </ul>
+      <h3>Logika</h3>
+      <p>Pokud Mayer = 0.8 (BTC levné) a multiplikátor = 1.8×, tak místo rovnoměrných 250 Kč doporučí <b>450 Kč</b>. Když naopak Mayer = 2.5 (BTC drahé) a multiplikátor = 0.3×, doporučí jen <b>75 Kč</b>. Plán se vždy vejde do zbývajícího budgetu.</p>
+    `,
+  },
+
+  math: {
+    title: '3. Matematický model',
+    body: `
+      <p>Aplikace kombinuje dvě ověřené metriky používané v kryptokomunitě a statisticky vychyluje pravidelnou DCA částku.</p>
+      <h3>Metriky</h3>
+      <ul>
+        <li><b>Cena BTC</b> – aktuální spotová cena z CoinGecko (v měně dle Nastavení).</li>
+        <li><b>200d SMA</b> (Simple Moving Average) – aritmetický průměr z denních closing cen za posledních 200 dní. „Čára trendu“, kolem které cena dlouhodobě osciluje.</li>
+        <li><b>Mayer Multiple</b> = <code>cena ÷ 200d SMA</code>. Slavná BTC metrika od Trace Mayera. Historický medián ≈ 1.4:
+          <ul>
+            <li><b>&lt; 1.0</b> – výrazně pod průměrem, historicky výborná vstupní úroveň</li>
+            <li><b>1.0 – 1.8</b> – normální pásmo, klasické DCA</li>
+            <li><b>1.8 – 2.4</b> – nad průměrem, opatrnost</li>
+            <li><b>&gt; 2.4</b> – přehřátí, historicky často krátce před korekcí</li>
+          </ul>
+        </li>
+        <li><b>Z-score (log)</b> – počet směrodatných odchylek, o kolik je <code>ln(aktuální cena)</code> nad/pod průměrem ln-cen za 365 dní. Statistická míra extrémnosti:
+          <ul>
+            <li><code>z = 0</code> – průměr roku</li>
+            <li><code>z = +2</code> – top 2.5 % roku (drahé)</li>
+            <li><code>z = −2</code> – bottom 2.5 % roku (levné)</li>
+          </ul>
+        </li>
+        <li><b>Multiplikátor</b> – faktor 0.2× – 2.5×, kterým se vynásobí rovnoměrná DCA částka. Pod 1× = méně než klasické DCA, nad 1× = více.</li>
+        <li><b>Verdikt</b> – slovní klasifikace odvozená z Mayer + z-score.</li>
+      </ul>
+      <h3>Vzorec multiplikátoru</h3>
+      <p><code>multiplikátor = clamp( (1.4 / mayer)<sup>k</sup> × exp(−z × 0.25),  0.2,  2.5 )</code></p>
+      <p>kde <code>k</code> je citlivost.</p>
+      <h3>Poznámka k měnám</h3>
+      <p>Mayer Multiple a z-score jsou <b>bezrozměrné</b> (ratio resp. počet sigma), takže jejich hodnota je stejná, ať počítáš v USD nebo CZK. Zobrazená cena a SMA jsou v měně podle Nastavení.</p>
+    `,
+  },
+
+  ai: {
+    title: '4. AI doporučení (Groq + Gemini)',
+    body: `
+      <p>Souběžně s deterministickým matematickým modelem se ptáme dvou LLM, aby přidaly kontext a alternativní pohled.</p>
+      <h3>Modely</h3>
+      <ul>
+        <li><b>Groq</b> – velmi rychlá inference (často &lt; 1 s). Default <code>llama-3.3-70b-versatile</code>.</li>
+        <li><b>Gemini</b> – Google model, výborný v dlouhém kontextu. Default <code>gemini-2.5-flash</code>.</li>
+      </ul>
+      <h3>Co AI dostane</h3>
+      <p>Oba modely dostanou identický kontext: aktuální cenu, 200d SMA, Mayer Multiple, z-score, multiplikátor, tvůj plán, kolik už jsi investoval a kolik intervalů zbývá.</p>
+      <h3>Co vrátí</h3>
+      <p>4 stručné body:</p>
+      <ol>
+        <li>Pohled na aktuální tržní situaci</li>
+        <li>Souhlas/úprava doporučené částky</li>
+        <li>Klíčové riziko, na které dát pozor</li>
+        <li>Konkrétní investiční rada</li>
+      </ol>
+      <h3>API klíče</h3>
+      <p>Pro spuštění potřebuješ klíče v <b>Nastavení</b>:</p>
+      <ul>
+        <li><b>Groq</b>: <code>console.groq.com</code> → API Keys (zdarma, free tier)</li>
+        <li><b>Gemini</b>: <code>aistudio.google.com</code> → Get API key (zdarma, free tier)</li>
+      </ul>
+      <p>Klíče se uloží jen do tvého <code>localStorage</code> a posílají se přímo na Groq/Gemini API. Nikam jinam.</p>
+    `,
+  },
+
+  chart: {
+    title: '5. Graf cenového vývoje',
+    body: `
+      <p>Vizualizace cen za posledních 365 dní v měně dle Nastavení.</p>
+      <h3>Vrstvy v grafu</h3>
+      <ul>
+        <li><b>Oranžová plná čára</b> – denní cena BTC.</li>
+        <li><b>Modrá čárkovaná čára</b> – 200denní klouzavý průměr (SMA). Kolem ní cena dlouhodobě osciluje.</li>
+        <li><b>Tyrkysové trojúhelníky</b> – tvé zaznamenané investice, umístěné na ceně v den nákupu.</li>
+      </ul>
+      <h3>Jak to číst</h3>
+      <p>Kdy je cena <b>pod modrou čarou</b>, Mayer Multiple je &lt; 1 → algoritmus doporučuje investovat víc. Když je výrazně <b>nad ní</b>, algoritmus utlumí. Trojúhelníky ti ukazují, jak konzistentně jsi nakupoval napříč různými cenovými úrovněmi.</p>
+    `,
+  },
+
+  history: {
+    title: '6. Historie investic',
+    body: `
+      <p>Seznam tvých zaznamenaných investic a jejich aktuální stav.</p>
+      <h3>Sloupce</h3>
+      <ul>
+        <li><b>Datum</b> – kdy jsi investici provedl.</li>
+        <li><b>Vklad</b> – kolik jsi reálně poslal (v CZK, jak vkládáš).</li>
+        <li><b>Cena BTC</b> – cena BTC v den nákupu (v zobrazované měně dle Nastavení).</li>
+        <li><b>Získané BTC</b> – kolik BTC jsi za vklad dostal.</li>
+        <li><b>Mayer</b> – Mayer Multiple v daný den (ratio cena ÷ 200d SMA). Pomáhá retrospektivně vidět, jak „dobře“ jsi tehdy nakoupil.</li>
+        <li><b>Hodnota dnes</b> – aktuální hodnota daného nákupu = získané BTC × dnešní cena.</li>
+        <li><b>Zisk/ztráta</b> – P&L vůči ekvivalentu vkladu v den nákupu. Vyjádřeno v zobrazované měně.</li>
+        <li><b>🗑</b> – smazání záznamu.</li>
+      </ul>
+      <h3>Pozn. k P&L v různých měnách</h3>
+      <p>Pokud zobrazuješ v USD a vkládal jsi v CZK, P&L se počítá vůči <i>USD ekvivalentu vkladu v den nákupu</i> (získané BTC × USD cena v daný den). To je matematicky správně, protože BTC drží hodnotu v USD, ne CZK.</p>
+      <h3>Export/Import</h3>
+      <p>Tlačítka pro zálohu/obnovu všech dat (plán + investice + nastavení) do/z JSON souboru.</p>
+    `,
+  },
+
+  sensitivity: {
+    title: 'Citlivost (k) – jak ji nastavit',
+    body: `
+      <p>Citlivost <code>k</code> řídí, <b>jak silně algoritmus reaguje na odchylku Mayer Multiple od historického průměru</b> (≈ 1.4). Čím vyšší <code>k</code>, tím razantněji se mění doporučená částka.</p>
+      <h3>Doporučené hodnoty</h3>
+      <table class="table">
+        <thead><tr><th>k</th><th>Charakter</th><th>Kdy použít</th></tr></thead>
+        <tbody>
+          <tr><td><b>0.5 – 0.9</b><br><small class="muted">jemná</small></td><td>Téměř klasické DCA, malá odchylka od průměru</td><td>Konzervativní investor; preferuješ pravidelnost před optimalizací. Vhodné pro dlouhý horizont (3+ roky).</td></tr>
+          <tr><td><b>1.0 – 1.7</b><br><small class="muted">střední (default)</small></td><td>Vyvážený poměr – při levné ceně investice mírně zvýší, při drahé mírně sníží</td><td>Většina lidí. Solidní kompromis. Doporučená volba, pokud nemáš silný názor.</td></tr>
+          <tr><td><b>1.8 – 2.4</b><br><small class="muted">silná</small></td><td>Razantní vychýlení; pod průměrem může multiplikátor dosáhnout 2×+, nad ním klesnout na 0.3×</td><td>Aktivní investor, který věří v mean-reversion BTC. Vyžaduje trpělivost – při dlouhotrvajícím býčím trhu budeš kupovat málo.</td></tr>
+          <tr><td><b>2.5 – 3.0</b><br><small class="muted">agresivní</small></td><td>Extrémní reakce; téměř „all-in při dně, neutrácet ve špičce“</td><td>Spekulativní přístup. Vyžaduje silnou víru v cyklickou povahu BTC. Pozor: při rostoucím trendu bez korekce zůstaneš s velkou rezervou.</td></tr>
+        </tbody>
+      </table>
+      <h3>Praktický příklad</h3>
+      <p>Budget 1000 Kč/měsíc, týdně, 4 intervaly = rovnoměrné DCA 250 Kč/týden. Při Mayer = 0.7 (BTC ~30 % pod 200d SMA) bude doporučení:</p>
+      <ul>
+        <li><b>k = 0.5</b>: ~350 Kč (1.4× průměr)</li>
+        <li><b>k = 1.5</b>: ~500 Kč (2.0× průměr)</li>
+        <li><b>k = 2.5</b>: ~625 Kč (cap na 2.5×)</li>
+      </ul>
+      <p style="background:rgba(251,191,36,0.1);border-left:3px solid var(--warning);padding:0.55rem 0.75rem;border-radius:4px;margin-top:1rem;">⚠ <b>Vyšší k = vyšší volatilita doporučení.</b> Při silně býčím trhu mohou agresivní hodnoty vést k tomu, že na konci období zůstane velký nevyčerpaný budget. Pokud tě „nevyčerpaný budget“ irituje, drž se k = 1.0–1.5.</p>
+    `,
+  },
+};
 
 // --- Utils ---
 function fmtMoney(v, currency) {
