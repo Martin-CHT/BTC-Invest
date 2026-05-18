@@ -100,6 +100,10 @@ function wireForm() {
 
   $('#btnRefresh').addEventListener('click', refresh);
   $('#btnSettings').addEventListener('click', () => $('#settingsModal').showModal());
+  $('#sensitivityHelp').addEventListener('click', (e) => {
+    e.preventDefault();
+    $('#sensitivityModal').showModal();
+  });
 
   // Auto-fill startDate if empty
   if (!$('#startDate').value) $('#startDate').value = todayISO();
@@ -276,29 +280,40 @@ function renderHistory() {
     return;
   }
   tfoot.hidden = false;
-  const currentPrice = lastContext?.currentPrice;
-  let sumAmount = 0, sumBTC = 0, sumCurrent = 0;
+
+  // Aktuální USD cena z lastContext (jen pokud byl refresh úspěšný).
+  const priceNowUsd = lastContext?.currentPrices?.usd ?? null;
+  const usdHistory = lastContext?.history ?? null;
+
+  // Akumulátory: vklad zůstává v CZK (původní amount), zbytek v USD pro konzistenci.
+  const sumByCcy = {};      // sumByCcy['CZK'] = celkový CZK vklad
+  let sumBTC = 0;
+  let sumInvestUsd = 0;     // ekvivalent vkladu v USD (k datu nákupu)
+  let sumCurrentUsd = 0;    // aktuální hodnota v USD
+
   const sorted = [...state.investments].sort((a, b) => a.date.localeCompare(b.date));
   for (const inv of sorted) {
-    const current = currentPrice ? inv.coinsReceived * currentPrice : null;
-    const pnl = current != null ? current - inv.amount : null;
-    sumAmount += inv.amount;
-    sumBTC += inv.coinsReceived;
-    if (current != null) sumCurrent += current;
+    const usdAtBuy = usdHistory ? priceAtDate(usdHistory, inv.date) : null;
+    const investUsd = usdAtBuy != null ? inv.coinsReceived * usdAtBuy : null;
+    const currentUsd = priceNowUsd != null ? inv.coinsReceived * priceNowUsd : null;
+    const pnlUsd = (currentUsd != null && investUsd != null) ? currentUsd - investUsd : null;
 
-    const mayer = lastContext?.history
-      ? mayerAtDate(lastContext.history, inv.priceAtBuy, inv.date)
-      : null;
+    sumByCcy[inv.currency] = (sumByCcy[inv.currency] || 0) + inv.amount;
+    sumBTC += inv.coinsReceived;
+    if (investUsd != null) sumInvestUsd += investUsd;
+    if (currentUsd != null) sumCurrentUsd += currentUsd;
+
+    const mayer = usdHistory ? mayerAtDate(usdHistory, inv.date) : null;
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${formatDate(inv.date)}</td>
       <td>${fmtMoney(inv.amount, inv.currency)}</td>
-      <td>${fmtMoney(inv.priceAtBuy, inv.currency)}</td>
+      <td>${usdAtBuy != null ? fmtMoney(usdAtBuy, 'USD') : '—'}</td>
       <td>${inv.coinsReceived.toFixed(8)}</td>
       <td>${mayer != null ? mayer.toFixed(2) : '—'}</td>
-      <td>${current != null ? fmtMoney(current, inv.currency) : '—'}</td>
-      <td class="${pnl > 0 ? 'pnl-pos' : pnl < 0 ? 'pnl-neg' : ''}">${pnl != null ? fmtSignedMoney(pnl, inv.currency) : '—'}</td>
+      <td>${currentUsd != null ? fmtMoney(currentUsd, 'USD') : '—'}</td>
+      <td class="${pnlUsd > 0 ? 'pnl-pos' : pnlUsd < 0 ? 'pnl-neg' : ''}">${pnlUsd != null ? fmtSignedMoney(pnlUsd, 'USD') : '—'}</td>
       <td class="row-actions"><button title="Smazat" data-id="${inv.id}">🗑</button></td>
     `;
     tr.querySelector('button').addEventListener('click', () => {
@@ -310,17 +325,31 @@ function renderHistory() {
     });
     tbody.appendChild(tr);
   }
-  $('#sumAmount').textContent = fmtMoney(sumAmount, state.plan?.currency || 'CZK');
+
+  // Vklad = součet podle měn (typicky CZK, případně CZK + USD pokud byly oboje)
+  const amountParts = Object.entries(sumByCcy).map(([c, v]) => fmtMoney(v, c));
+  $('#sumAmount').textContent = amountParts.join(' + ');
   $('#sumBTC').textContent = sumBTC.toFixed(8);
-  $('#sumCurrent').textContent = currentPrice ? fmtMoney(sumCurrent, state.plan?.currency || 'CZK') : '—';
-  const totalPnl = sumCurrent - sumAmount;
-  $('#sumPnl').innerHTML = currentPrice
-    ? `<span class="${totalPnl > 0 ? 'pnl-pos' : totalPnl < 0 ? 'pnl-neg' : ''}">${fmtSignedMoney(totalPnl, state.plan?.currency || 'CZK')}</span>`
+  $('#sumCurrent').textContent = priceNowUsd != null ? fmtMoney(sumCurrentUsd, 'USD') : '—';
+  const totalPnlUsd = sumCurrentUsd - sumInvestUsd;
+  $('#sumPnl').innerHTML = (priceNowUsd != null && usdHistory)
+    ? `<span class="${totalPnlUsd > 0 ? 'pnl-pos' : totalPnlUsd < 0 ? 'pnl-neg' : ''}">${fmtSignedMoney(totalPnlUsd, 'USD')}</span>`
     : '—';
 }
 
-function mayerAtDate(history, price, dateStr) {
-  // Najdi index nejbližšího dne
+function priceAtDate(history, dateStr) {
+  const target = new Date(dateStr).getTime();
+  let idx = 0;
+  let bestDiff = Math.abs(history[0].date.getTime() - target);
+  for (let i = 1; i < history.length; i++) {
+    const d = Math.abs(history[i].date.getTime() - target);
+    if (d < bestDiff) { idx = i; bestDiff = d; }
+  }
+  return history[idx].price;
+}
+
+function mayerAtDate(history, dateStr) {
+  // Najdi index nejbližšího dne v USD historii a spočti Mayer = cena_USD / 200d SMA_USD.
   const target = new Date(dateStr).getTime();
   let idx = 0;
   let bestDiff = Math.abs(history[0].date.getTime() - target);
@@ -331,7 +360,7 @@ function mayerAtDate(history, price, dateStr) {
   if (idx < 200) return null;
   let sum = 0;
   for (let j = idx - 200; j < idx; j++) sum += history[j].price;
-  return price / (sum / 200);
+  return history[idx].price / (sum / 200);
 }
 
 // --- AI ---
@@ -390,6 +419,8 @@ async function askGeminiAndRender(ctx) {
 }
 
 // --- Main refresh: načte data, spočítá vše, překreslí ---
+// BTC cena, SMA, Mayer, z-score a graf jsou vždy v USD (přirozená měna BTC).
+// Plán/budget/doporučení zůstávají v měně plánu (typicky CZK).
 async function refresh() {
   if (!state.plan) {
     $('#recoBody').innerHTML = '<p class="muted">Vytvoř plán, abys viděl doporučení.</p>';
@@ -397,34 +428,34 @@ async function refresh() {
     return;
   }
   const plan = state.plan;
-  const curLower = plan.currency.toLowerCase();
 
   try {
     $('#priceTicker').textContent = '… načítám';
-    const [priceData, history] = await Promise.all([
+    const [priceData, historyUsd] = await Promise.all([
       getCurrentPrice(plan.asset, ['usd', 'czk']),
-      getHistory(plan.asset, curLower, 365),
+      getHistory(plan.asset, 'usd', 365),
     ]);
-    const currentPrice = priceData[curLower];
+    const priceUsd = priceData.usd;
     const change24h = priceData.change24h;
 
-    $('#priceTicker').textContent = `${fmtMoney(currentPrice, plan.currency)} (${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%)`;
+    $('#priceTicker').textContent = `${fmtMoney(priceUsd, 'USD')} (${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%)`;
     $('#priceTicker').className = 'ticker ' + (change24h >= 0 ? 'up' : 'down');
 
-    const prices = history.map((h) => h.price);
-    const metrics = computeMetrics(prices, currentPrice, state.settings.sensitivity);
+    const prices = historyUsd.map((h) => h.price);
+    const metrics = computeMetrics(prices, priceUsd, state.settings.sensitivity);
     const reco = computeRecommendation({
       plan,
       investments: state.investments.filter((i) => i.currency === plan.currency),
       multiplier: metrics.multiplier,
     });
 
-    const history12mPctChange = ((currentPrice - prices[0]) / prices[0]) * 100;
+    const history12mPctChange = ((priceUsd - prices[0]) / prices[0]) * 100;
 
     lastContext = {
       asset: plan.asset,
-      currency: plan.currency,
-      currentPrice,
+      currency: 'USD',
+      currentPrice: priceUsd,
+      currentPrices: { usd: priceData.usd, czk: priceData.czk },
       sma200: metrics.sma200,
       mayer: metrics.mayer,
       zScore: metrics.zScore,
@@ -432,13 +463,13 @@ async function refresh() {
       verdict: metrics.verdict,
       plan,
       recommendation: reco,
-      history,
+      history: historyUsd,
       history12mPctChange,
     };
 
     renderRecommendation(reco, metrics, plan);
     updateMathView();
-    renderChart($('#priceChart'), { history, investments: state.investments, currency: plan.currency });
+    renderChart($('#priceChart'), { history: historyUsd, investments: state.investments, currency: 'USD' });
     renderHistory();
   } catch (err) {
     console.error(err);
