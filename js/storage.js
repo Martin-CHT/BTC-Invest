@@ -8,7 +8,7 @@ const defaultState = {
     groqModel: 'llama-3.3-70b-versatile',
     geminiKey: '',
     geminiModel: 'gemini-2.5-flash',
-    displayCurrency: 'CZK',
+    displayCurrency: 'USD',
     sensitivity: 1.5,
   },
   customAssets: [],
