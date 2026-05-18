@@ -12,18 +12,25 @@ export function renderChart(canvas, { history, investments, currency }) {
   const prices = history.map((p) => p.price);
   const smaSeries = rolling200(prices);
 
-  // Investice mapujeme na index nejbližšího dne v historii.
+  // Investice: pole stejné délky jako labels, null jinde, cena v dni nákupu na správném indexu.
+  // (Index-based je spolehlivější než {x: labelString, y: ...} na kategorické ose.)
   const labelTimes = history.map((p) => p.date.getTime());
-  const investmentPoints = investments.map((inv) => {
-    const t = new Date(inv.date).getTime();
+  const oldestT = labelTimes[0];
+  const newestT = labelTimes[labelTimes.length - 1] + 86400000; // +1 den tolerance
+  const investmentSeries = new Array(labels.length).fill(null);
+  const investmentMeta = new Array(labels.length).fill(null); // pro tooltip
+  for (const inv of investments) {
+    const t = parseLocalDate(inv.date).getTime();
+    if (t < oldestT - 86400000 || t > newestT) continue;
     let bestIdx = 0;
     let bestDiff = Math.abs(labelTimes[0] - t);
     for (let i = 1; i < labelTimes.length; i++) {
       const d = Math.abs(labelTimes[i] - t);
       if (d < bestDiff) { bestIdx = i; bestDiff = d; }
     }
-    return { x: labels[bestIdx], y: inv.priceAtBuy };
-  });
+    investmentSeries[bestIdx] = prices[bestIdx];
+    investmentMeta[bestIdx] = inv;
+  }
 
   if (chartInstance) chartInstance.destroy();
 
@@ -53,13 +60,16 @@ export function renderChart(canvas, { history, investments, currency }) {
         },
         {
           label: 'Investice',
-          data: investmentPoints,
-          type: 'scatter',
+          data: investmentSeries,
           backgroundColor: '#2dd4bf',
-          borderColor: '#2dd4bf',
-          pointRadius: 6,
+          borderColor: 'transparent',
+          pointBackgroundColor: '#2dd4bf',
+          pointBorderColor: '#2dd4bf',
+          pointRadius: 7,
+          pointHoverRadius: 9,
           pointStyle: 'triangle',
           showLine: false,
+          spanGaps: false,
         },
       ],
     },
@@ -93,8 +103,23 @@ export function renderChart(canvas, { history, investments, currency }) {
           borderWidth: 1,
           titleColor: '#e4e8ed',
           bodyColor: '#e4e8ed',
+          filter: (item) => item.parsed.y != null,
           callbacks: {
-            label: (ctx) => `${ctx.dataset.label}: ${formatMoney(ctx.parsed.y, currency)}`,
+            label: (ctx) => {
+              const base = `${ctx.dataset.label}: ${formatMoney(ctx.parsed.y, currency)}`;
+              if (ctx.dataset.label === 'Investice') {
+                const inv = investmentMeta[ctx.dataIndex];
+                if (inv) {
+                  return [
+                    `📅 ${formatDateCs(inv.date)}`,
+                    `💰 Vklad: ${formatMoney(inv.amount, inv.currency)}`,
+                    `📈 Cena BTC: ${formatMoney(ctx.parsed.y, currency)}`,
+                    `₿ Získáno: ${inv.coinsReceived.toFixed(8)} BTC`,
+                  ];
+                }
+              }
+              return base;
+            },
           },
         },
       },
@@ -123,6 +148,18 @@ function formatDate(d) {
   const day = String(d.getDate()).padStart(2, '0');
   const month = String(d.getMonth() + 1).padStart(2, '0');
   return `${day}.${month}.${String(d.getFullYear()).slice(2)}`;
+}
+
+function formatDateCs(dateStr) {
+  const d = parseLocalDate(dateStr);
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+}
+
+// "2026-05-18" → Date v LOKÁLNÍ TZ (ne UTC), aby se den nepřevracel přes půlnoc.
+function parseLocalDate(s) {
+  if (s instanceof Date) return s;
+  const [y, m, d] = String(s).split('-').map(Number);
+  return new Date(y, m - 1, d);
 }
 
 function formatShortMoney(v, currency) {

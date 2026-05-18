@@ -246,13 +246,16 @@
           </div>
         </label>
         <label>
-          <span>Cena BTC v daný den</span>
-          <input type="number" id="invPrice" step="0.01" min="0" required />
-          <small class="muted">Předvyplněno z historie. Můžeš upravit.</small>
+          <span>Cena BTC k datu</span>
+          <div class="input-with-suffix">
+            <input type="number" id="invPrice" step="0.01" min="0" required />
+            <span class="suffix" id="invPriceSuffix">USD</span>
+          </div>
+          <small class="muted">Předvyplněno z historie. Měna podle „Částka" výše.</small>
         </label>
       </div>
       <div class="row gap end">
-        <button type="button" id="btnCancelInv" class="btn ghost" value="cancel">Zrušit</button>
+        <button id="btnCancelInv" class="btn ghost" value="cancel">Zrušit</button>
         <button class="btn primary" id="btnSaveInv" value="save">Uložit</button>
       </div>
     </form>

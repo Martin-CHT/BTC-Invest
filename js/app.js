@@ -212,7 +212,9 @@ function wireHistory() {
   $('#btnAddInvestment').addEventListener('click', async () => {
     $('#invDate').value = todayISO();
     $('#invAmount').value = '';
-    $('#invCurrency').value = state.plan?.currency || 'CZK';
+    // Default = displayCurrency, aby modal byl konzistentní s tím, co vidíš jinde.
+    $('#invCurrency').value = displayCurrency();
+    syncInvPriceSuffix();
     try {
       const price = await getCurrentPrice(state.plan?.asset || 'bitcoin');
       const cur = $('#invCurrency').value.toLowerCase();
@@ -224,7 +226,15 @@ function wireHistory() {
   });
 
   $('#invDate').addEventListener('change', updateInvPrice);
-  $('#invCurrency').addEventListener('change', updateInvPrice);
+  $('#invCurrency').addEventListener('change', () => {
+    syncInvPriceSuffix();
+    updateInvPrice();
+  });
+
+  // Klik mimo obsah dialogu = zavřít (cancel)
+  enableBackdropClose($('#investmentModal'));
+  enableBackdropClose($('#settingsModal'));
+  enableBackdropClose($('#helpModal'));
 
   $('#investmentModal').addEventListener('close', () => {
     if ($('#investmentModal').returnValue !== 'save') return;
@@ -289,6 +299,21 @@ async function updateInvPrice() {
   } catch (e) {
     /* nech beze změny */
   }
+}
+
+function syncInvPriceSuffix() {
+  const suf = $('#invPriceSuffix');
+  if (suf) suf.textContent = $('#invCurrency').value;
+}
+
+function enableBackdropClose(dialog) {
+  if (!dialog) return;
+  dialog.addEventListener('click', (e) => {
+    // Klik na samotný element <dialog> (ne na obsah uvnitř) = backdrop
+    if (e.target === dialog) {
+      dialog.close('cancel');
+    }
+  });
 }
 
 function renderHistory() {
