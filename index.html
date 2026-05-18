@@ -59,7 +59,7 @@
           </select>
         </label>
         <label>
-          <span>Citlivost (k)</span>
+          <span>Citlivost (k) <a href="#" id="sensitivityHelp" title="Co znamená citlivost?" style="color:var(--accent);text-decoration:none;">ⓘ</a></span>
           <input type="range" id="sensitivity" min="0.5" max="3" step="0.1" value="1.5" />
           <small id="sensitivityLabel">1.5 – střední</small>
         </label>
@@ -81,6 +81,16 @@
       <div id="recoBody">
         <p class="muted">Zadej plán a načti data…</p>
       </div>
+      <details class="explain">
+        <summary>Jak číst doporučení?</summary>
+        <div class="explain-body">
+          <p><b>Verdikt</b> (barevný štítek) – pětistupňová klasifikace trhu od „Silný nákup“ po „Drahé – vyčkat“. Vychází z Mayer Multiple a z-score (viz model níže).</p>
+          <p><b>Hlavní číslo</b> – kolik <b>CZK</b> investovat právě v tomto intervalu. Rovná se: <code>(zbývající budget ÷ zbývající intervaly) × multiplikátor</code>. Při levném BTC dostaneš víc než průměr, při drahém zlomek.</p>
+          <p><b>Další interval</b> – datum, kdy by sis měl podle plánu otevřít aplikaci a investovat znovu.</p>
+          <p><b>Investováno / Zbývá</b> – aktuální čerpání plánu. Pokud jsi v jednom intervalu utratil méně, „úspora“ se rovnoměrně rozdělí do dalších intervalů.</p>
+          <p><b>Rovnoměrné DCA</b> – kolik by ses investoval, kdybys jel klasické DCA bez vychylování. Slouží jako porovnání: doporučená částka je rovnoměrné DCA × multiplikátor.</p>
+        </div>
+      </details>
     </section>
 
     <!-- 3. Matematický výpočet -->
@@ -97,10 +107,19 @@
       <details class="explain">
         <summary>Jak se počítá?</summary>
         <div class="explain-body">
-          <p><b>Mayer Multiple</b> = aktuální cena ÷ 200denní klouzavý průměr. Historický medián ≈ 1.4. Hodnota pod 1 značí výrazně podhodnocený BTC, nad 2.4 silně nadhodnocený.</p>
-          <p><b>Z-score</b> je standardizovaná odchylka log-ceny od průměru za 1 rok – statistická míra, jak je aktuální cena výjimečná.</p>
-          <p><b>Multiplikátor</b> kombinuje obě veličiny do faktoru 0.2×–2.5×, kterým se škáluje plánovaná částka na interval. Pak je omezen zbývajícím budgetem.</p>
-          <p>Vzorec: <code>factor = clamp((1.4 / mayer)^k × zAdjust, 0.2, 2.5)</code>, kde <code>k</code> je citlivost.</p>
+          <p><b>Cena BTC</b> – aktuální spotová cena z CoinGecko v USD.</p>
+          <p><b>200d SMA</b> (Simple Moving Average) – aritmetický průměr z denních closing cen za posledních 200 dní v USD. Hladká „čára trendu“, kolem které cena dlouhodobě osciluje.</p>
+          <p><b>Mayer Multiple</b> = <code>cena ÷ 200d SMA</code>. Slavná BTC metrika od Trace Mayera. Historický medián ≈ 1.4. Interpretace:</p>
+          <ul>
+            <li><b>&lt; 1.0</b> – výrazně pod průměrem, historicky výborná vstupní úroveň</li>
+            <li><b>1.0 – 1.8</b> – normální pásmo, klasické DCA</li>
+            <li><b>1.8 – 2.4</b> – nad průměrem, opatrnost</li>
+            <li><b>&gt; 2.4</b> – přehřátí, historicky často krátce před korekcí</li>
+          </ul>
+          <p><b>Z-score (log)</b> – počet standardních odchylek, o kolik je <code>ln(aktuální cena)</code> nad/pod průměrem ln-cen za 365 dní. Doplněk Mayer Multiple, statistická míra extrémnosti: <code>z = 0</code> = průměr roku, <code>z = +2</code> = top 2.5 % roku (drahé), <code>z = -2</code> = bottom 2.5 % roku (levné).</p>
+          <p><b>Multiplikátor</b> – výsledný faktor 0.2× – 2.5×, kterým se vynásobí rovnoměrná DCA částka. Pod 1× = méně než klasické DCA, nad 1× = více. Vzorec:</p>
+          <p><code>multiplikátor = clamp( (1.4 / mayer)<sup>k</sup> × exp(-z × 0.25), 0.2, 2.5 )</code></p>
+          <p><b>Verdikt</b> – textová klasifikace ve 5 stupních (Silný nákup → Drahé – vyčkat) na základě Mayer a z-score.</p>
         </div>
       </details>
     </section>
@@ -140,12 +159,12 @@
         <thead>
           <tr>
             <th>Datum</th>
-            <th>Částka</th>
-            <th>Cena BTC</th>
+            <th title="Tvůj reálný vklad v CZK">Vklad (CZK)</th>
+            <th title="Cena BTC v USD k datu nákupu">Cena BTC (USD)</th>
             <th>Získané BTC</th>
-            <th>Mayer</th>
-            <th>Aktuální hodnota</th>
-            <th>Zisk/ztráta</th>
+            <th title="Mayer Multiple v daný den (cena / 200d SMA)">Mayer</th>
+            <th title="Aktuální hodnota v USD = získané BTC × dnešní USD cena">Hodnota dnes (USD)</th>
+            <th title="P&L v USD vůči USD ekvivalentu vkladu v den nákupu">Zisk/ztráta (USD)</th>
             <th></th>
           </tr>
         </thead>
@@ -260,6 +279,43 @@
       <div class="row gap end">
         <button type="button" id="btnCancelInv" class="btn ghost" value="cancel">Zrušit</button>
         <button class="btn primary" id="btnSaveInv" value="save">Uložit</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Sensitivity help modal -->
+  <dialog id="sensitivityModal" class="modal">
+    <form method="dialog">
+      <h2>Citlivost (k) – jak ji nastavit</h2>
+      <p>Citlivost <code>k</code> řídí, <b>jak silně algoritmus reaguje na odchylku Mayer Multiple od historického průměru</b> (≈ 1.4). Čím vyšší <code>k</code>, tím razantněji se mění doporučená částka při změně ceny.</p>
+
+      <fieldset>
+        <legend>Doporučené hodnoty</legend>
+        <table class="table" style="margin:0">
+          <thead><tr><th>k</th><th>Charakter</th><th>Kdy použít</th></tr></thead>
+          <tbody>
+            <tr><td><b>0.5 – 0.9</b><br><small class="muted">jemná</small></td><td>Téměř klasické DCA, malá odchylka od průměru</td><td>Konzervativní investor; preferuješ pravidelnost před optimalizací. Vhodné pro dlouhý horizont (3+ roky), kde se každoroční výkyvy vyrovnávají.</td></tr>
+            <tr><td><b>1.0 – 1.7</b><br><small class="muted">střední (default)</small></td><td>Vyvážený poměr – při levné ceně investice mírně zvýší, při drahé mírně sníží</td><td>Většina lidí. Solidní kompromis mezi „neřešit“ a „aktivně optimalizovat“. Doporučená volba, pokud nemáš silný názor.</td></tr>
+            <tr><td><b>1.8 – 2.4</b><br><small class="muted">silná</small></td><td>Razantní vychýlení; pod průměrem může multiplikátor dosáhnout 2×+, nad ním klesnout na 0.3×</td><td>Aktivní investor, který věří v mean-reversion BTC. Vyžaduje větší trpělivost – při dlouhotrvajícím býčím trhu budeš kupovat málo.</td></tr>
+            <tr><td><b>2.5 – 3.0</b><br><small class="muted">agresivní</small></td><td>Extrémní reakce; téměř „all-in při dně, neutrácet ve špičce“</td><td>Spekulativní přístup. Pokud si myslíš, že umíš dobře číst makro a tržní psychologii. Pozor: při rostoucím trendu bez korekce zůstaneš s velkou rezervou.</td></tr>
+          </tbody>
+        </table>
+      </fieldset>
+
+      <fieldset>
+        <legend>Praktický příklad (budget 1000 Kč/měsíc, týdně, 4 intervaly)</legend>
+        <p style="font-size:0.88rem">Rovnoměrné DCA by bylo 250 Kč/týden. Při Mayer = 0.7 (BTC ~30 % pod 200d SMA) bude doporučení:</p>
+        <ul style="font-size:0.88rem;margin:0">
+          <li><b>k = 0.5</b>: ~350 Kč (1.4× průměr)</li>
+          <li><b>k = 1.5</b>: ~500 Kč (2.0× průměr)</li>
+          <li><b>k = 2.5</b>: ~625 Kč (cap na 2.5×)</li>
+        </ul>
+      </fieldset>
+
+      <p class="warning">⚠ <b>Vyšší k = vyšší volatilita doporučení.</b> Při silně býčím trhu mohou agresivní hodnoty vést k tomu, že na konci období zůstane velký nevyčerpaný budget. Doporučení: pokud tě „nevyčerpaný budget“ irituje, drž se k = 1.0–1.5.</p>
+
+      <div class="row gap end">
+        <button class="btn primary" value="close">Zavřít</button>
       </div>
     </form>
   </dialog>
